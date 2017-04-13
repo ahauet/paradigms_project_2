@@ -1,8 +1,11 @@
-#Context
+############################################
+#
+# Context
+#
+###########################################
 class Context
 
   attr_accessor :adaptations
-
 
   def initialize
     @active = false
@@ -14,93 +17,93 @@ class Context
   end
 
   def activate
+    if @active
+      ContextManager.instance.remove(self)
+    end
     ContextManager.instance.add(self)
-    @active = true
     @adaptations.each do |adaptation|
       adaptation.deploy
     end
+    @active = true
   end
 
   def deactivate
-    puts "DEactivate"
+    ContextManager.instance.contexts.length
     ContextManager.instance.remove(self)
+    new_adaptation = nil
     @adaptations.each do |adaptation|
-      new_adaptation = ContextManager.instance.get_adaptation(adaptation)
-
-      if new_adaptation != nil
-        puts new_adaptation.klass
-        new_adaptation.deploy
-      end
+      new_adaptation = ContextManager.instance.get_previous_adaptation(adaptation)
+    end
+    if new_adaptation != nil
+      @active = false
+      new_adaptation.deploy
     end
   end
 
   def adapt	(klass,	method,	&impl)
+    ContextManager.instance.save_default_context(klass, method)
     @adaptations.push(Adaptation.new(klass, method, impl))
   end
 
-  def unadapt	(klass,	method);	end
-
-  # Indicate if the context adapt a method of a specific klass
-  def adapt_such(klass, method)
-    @adaptations.each do |adaptation|
-      if adaptation.klass == klass && adaptation.method_name == method
-        return adaptation
-      end
-    end
-    nil
+  def unadapt	(klass,	method)
   end
 
   def contains(klass, method)
     @adaptations.each do |adaptation|
-      if adaptation.klass == klass && adaptation.method_name == method
+      if adaptation.klass == klass  && adaptation.method_name == method
         return true
       end
     end
     false
   end
 
-  def self.reset_cop_state
-    #ContextManager.instance.reset
-    ContextManager.instance.contexts.each do |context|
-      puts ContextManager.instance.contexts.length
-      context.deactivate
-      puts ContextManager.instance.contexts.length
+  def find(klass, method)
+    @adaptations.each do |adaptation|
+      if adaptation.klass == klass  && adaptation.method_name == method
+        return adaptation
+      end
     end
+    nil
   end
-end
 
+  def reset_cop_state
+    ContextManager.instance.reset
+  end
+
+end
+############################################
+#
 # Adaptation
+#
+###########################################
 class Adaptation
 
   attr_accessor :klass, :method_name, :impl
 
-  def initialize(klass,method,impl)
+  def initialize(klass,method_name,impl)
     @klass = klass
-    @method_name = method
+    @method_name = method_name
     @impl = impl
   end
 
   def deploy
-    puts "DEPLOY"
-    nom = @method_name
+    name = @method_name
     impl = @impl
-    puts nom
-    #puts impl.bind(@klass.new).call
-    @klass.send(:define_method,@method_name,@impl)
-    #@klass.class_eval{ define_method(nom, impl) }
+    @klass.class_eval{ define_method(name, impl) }
   end
 end
-
-
-#ContextManager
+############################################
+#
+# Adaptation
+#
+###########################################
 class ContextManager
 
   attr_accessor :contexts
 
   def initialize
     @contexts = Array.new
-    @default_context = Context.new
-    puts @contexts.length
+    @default_implementation = Array.new
   end
 
   @@instance = ContextManager.new
@@ -109,32 +112,47 @@ class ContextManager
     return @@instance
   end
 
-  def add (context)
-    puts "ADD"
-    context.adaptations.each do |adaptation|
-      if  !@default_context.contains(adaptation.klass, adaptation.method_name)
-        method = adaptation.klass.instance_method(adaptation.method_name)
-        impl = method.bind(adaptation.klass.new).call
-        @default_context.adapt(adaptation.klass,adaptation.method_name){impl}
-      end
-    end
+  def add(context)
     @contexts.push(context)
   end
 
   def remove(context)
-    puts 'DELETE'
     @contexts.delete(context)
-
   end
 
-  def get_adaptation(adaptation)
-    @contexts.each do |context|
-      result = context.adapt_such(adaptation.klass, adaptation.method_name)
-      if result != nil
-        return result
+  def save_default_context(klass, method)
+    has = false
+    @default_implementation.each do |adaptation|
+      if adaptation.klass == klass  && adaptation.method_name == method
+        has = true
       end
     end
-    return @default_context.adapt_such(adaptation.klass, adaptation.method_name)
+    if !has
+      impl = klass.instance_method(method)
+      @default_implementation.push(Adaptation.new(klass, method, impl))
+    end
+  end
+
+  def get_previous_adaptation(adaptation)
+    @contexts.each do |context|
+      new_adaptation = context.find(adaptation.klass, adaptation.method_name)
+      if new_adaptation != nil
+        return new_adaptation
+      end
+    end
+    @default_implementation.each do |default_adaptation|
+      if adaptation.klass == default_adaptation.klass  && adaptation.method_name == default_adaptation.method_name
+        return default_adaptation
+      end
+    end
+    return nil
+  end
+
+  def reset
+    @contexts = Array.new
+    @default_implementation.each do |adaptation|
+      adaptation.deploy
+    end
   end
 
   private_class_method :new
