@@ -8,26 +8,27 @@ end
 ###########################################
 class Context
 
-  attr_accessor :adaptations
+  attr_accessor :adaptations, :count
 
   def initialize
-    @active = false
     @adaptations = Array.new
+    @count = 0
   end
 
   def active?
-    @active
+    @count > 0
   end
 
   def activate
-    @active = true
-    # If the context is already active, we will
-    # remove it from the stack and will add it
-    # on the top
-    if @active
-      ContextManager.instance.remove(self)
+    @count = @count + 1
+    if !ContextManager.instance.contexts.include? self
+      ContextManager.instance.add(self)
     end
-    ContextManager.instance.add(self)
+    context = ContextManager.instance.get_current_context
+    context.activate_context
+  end
+
+  def activate_context
     # We will deploy the adaptations
     @adaptations.each do |adaptation|
       adaptation.deploy
@@ -35,8 +36,10 @@ class Context
   end
 
   def deactivate
-    @active = false
+    @count = @count - 1
+  end
 
+  def deactivate_context
     ContextManager.instance.remove(self)
 
     new_adaptation = nil
@@ -56,7 +59,7 @@ class Context
   def adapt	(klass,	method,	&impl)
     adaptation = Adaptation.new(klass, method, impl)
     @adaptations.push(adaptation)
-    if @active
+    if @count > 0
       adaptation.deploy
     end
   end
@@ -66,7 +69,7 @@ class Context
       if adaptation.klass == klass && adaptation.method_name == method
         tmp = adaptation
         @adaptations.delete(tmp)
-        if @active
+        if @count > 0
           new_adaptation = ContextManager.instance.get_previous_adaptation(tmp)
           if new_adaptation != nil
             new_adaptation.deploy
@@ -222,6 +225,19 @@ class ContextManager
         @foreign_implementation.delete(fadaptation)
       end
     end
+  end
+
+  def get_current_context
+    result = nil
+    if @contexts.length > 0
+      result = @contexts.first
+      @contexts.each do |context|
+        if context.count > result.count
+          result = context
+        end
+      end
+    end
+    result
   end
 
   def reset
