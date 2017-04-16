@@ -36,7 +36,9 @@ class Context
   end
 
   def deactivate
-    @count = @count - 1
+    if @count > 0
+      @count = @count - 1
+    end
   end
 
   def deactivate_context

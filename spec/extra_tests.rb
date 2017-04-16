@@ -93,7 +93,27 @@ describe Context do
   end
 
   context '#deactivate' do
-    context 'when'
+    context 'when a context is created' do
+      before {
+        reset_cop_state
+        @c = Context.new
+        @c.deactivate
+      }
+      it 'does not modify the counter' do
+        expect(@c.count).to eq 0
+      end
+      context 'when the context is activate three times' do
+        before {
+          @c.activate
+          @c.activate
+          @c.activate
+          @c.deactivate
+        }
+        it 'does decreases the counter of the context' do
+          expect(@c.count).to eq 2
+        end
+      end
+    end
   end
 end
 

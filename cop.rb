@@ -1,3 +1,21 @@
+def proceed(*args)
+  context = ProceedManager.instance.context
+  klass = ProceedManager.instance.klass
+  method = ProceedManager.instance.method_name
+  adaptation = ContextManager.instance.get_previous_adaptation_for_proceed(context, klass, method)
+  if adaptation != nil
+    if adaptation.impl.class == UnboundMethod
+      adaptation.impl.bind(adaptation.klass.class_eval("self.new")).call
+    else
+      ProceedManager.instance.klass = adaptation.klass
+      ProceedManager.instance.method_name =  adaptation.method_name
+      ProceedManager.instance.context =  adaptation.context
+      adaptation.impl.call()
+    end
+  end
+end
+
+
 def reset_cop_state
   Context.reset_cop_state
 end
@@ -24,6 +42,7 @@ class Context
     # If the context is already active, we will
     # remove it from the stack and will add it
     # on the top
+
     if @active
       ContextManager.instance.remove(self)
     end
@@ -54,7 +73,7 @@ class Context
 
 
   def adapt	(klass,	method,	&impl)
-    adaptation = Adaptation.new(klass, method, impl)
+    adaptation = Adaptation.new(self, klass, method, impl)
     @adaptations.push(adaptation)
     if @active
       adaptation.deploy
@@ -90,11 +109,6 @@ class Context
     nil
   end
 
-  def self.proceed(caller,klass, method, impl)
-    klass.instance_methods(false).each do |meth|
-      puts klass.instance_method(meth).to_r == impl
-    end
-  end
 
   def self.reset_cop_state
     ContextManager.instance.reset
@@ -107,10 +121,11 @@ end
 ###########################################
 class Adaptation
 
-  attr_accessor :klass, :method_name, :impl
+  attr_accessor :klass, :method_name, :impl, :context
 
 
-  def initialize(klass, method_name, impl)
+  def initialize(context, klass, method_name, impl)
+    @context = context
     @klass = klass
     @method_name = method_name
     @impl = impl
@@ -122,15 +137,28 @@ class Adaptation
     else
       ContextManager.instance.save_foreign_implementation(self)
     end
-    klass = @klass
-    name = @method_name
-    impl = @impl
-    @klass.class_eval{ define_method(name, impl)
-    define_method(:proceed){
-      puts caller.first
-      Context.proceed(self,klass,name,impl)
-    }}
+      if impl.class == UnboundMethod
+        name = @method_name
+        impl = @impl
+        @klass.send(:define_method, name, impl)
+      else
+        klass = @klass
+        name = @method_name
+        impl = @impl
+        context = @context
+        @klass.send(:define_method, name, lambda do |*args|
+          ProceedManager.instance.klass = klass
+          ProceedManager.instance.method_name = name
+          ProceedManager.instance.context = context
+          impl.call(*args)
+        end)
+      end
   end
+
+  def deploy_default
+    @klass.class_eval{ define_method(name, impl)}
+  end
+
 
   def undeploy
     name = @method_name
@@ -158,8 +186,15 @@ class ContextManager
     return @@instance
   end
 
+  def print_context
+    puts 'CONTEXT'
+    @contexts.each do |context|
+      puts context
+    end
+  end
+
   def add(context)
-    @contexts.push(context)
+    @contexts.unshift(context)
   end
 
   def remove(context)
@@ -176,7 +211,7 @@ class ContextManager
 
     if !already_have && !contains_in_foreign_implementation(klass, method)
       impl = klass.instance_method(method)
-      @default_implementation.push(Adaptation.new(klass, method, impl))
+      @default_implementation.push(Adaptation.new(nil,klass, method, impl))
     end
   end
 
@@ -216,6 +251,28 @@ class ContextManager
     nil
   end
 
+  def get_previous_adaptation_for_proceed(context,klass,method_name)
+    previous = false
+    @contexts.each do |pcontext|
+      if !previous
+        if pcontext == context
+          previous = true
+        end
+      else
+        new_adaptation = pcontext.find(klass, method_name)
+        if new_adaptation != nil
+          return new_adaptation
+        end
+      end
+    end
+    @default_implementation.each do |default_adaptation|
+      if klass == default_adaptation.klass  && method_name == default_adaptation.method_name
+        return default_adaptation
+      end
+    end
+    nil
+  end
+
   def remove_foreign_implementation(adaptation)
     @foreign_implementation.each do |fadaptation|
       if fadaptation.klass == adaptation.klass  && fadaptation.method_name == adaptation.method_name
@@ -234,6 +291,35 @@ class ContextManager
     @contexts = Array.new
     @default_implementation = Array.new
     @foreign_implementation = Array.new
+    ProceedManager.instance.reset
+  end
+
+  private_class_method :new
+end
+class ProceedManager
+
+  attr_accessor :method_name, :klass, :context
+
+  def initialize
+    @context = nil
+    @method_name = nil
+    @klass = nil
+  end
+
+  def print
+    puts "context #{@context} - klass #{@klass} - method_name #{@method_name}"
+  end
+
+  @@instance = ProceedManager.new
+
+  def self.instance
+    return @@instance
+  end
+
+  def reset
+    @context = nil
+    @method_name = nil
+    @klass = nil
   end
 
   private_class_method :new
